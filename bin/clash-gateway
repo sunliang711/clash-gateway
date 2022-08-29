@@ -46,10 +46,12 @@ config(){
 
 start(){
     sudo systemctl start clash-gateway
+    sudo systemctl start clash-gateway-rule
 }
 
 stop(){
     sudo systemctl stop clash-gateway
+    sudo systemctl stop clash-gateway-rule
 }
 
 restart(){
@@ -63,8 +65,15 @@ _start_pre(){
         exit 1
     fi
 }
-
 _start_post(){
+    echo
+}
+
+_stop_post(){
+    echo
+}
+
+setRule(){
     local defaultDev="$(ip r s | grep default | awk '{print $5}')"
     echo "default dev: ${defaultDev}"
     local subnet="$(ip r s | grep -v default | grep ${defaultDev} | awk '{print $1}')"
@@ -74,20 +83,20 @@ _start_post(){
     iptables -t nat -A POSTROUTING -o ${defaultDev} -j MASQUERADE
     iptables -P FORWARD ACCEPT
 
-    local redirPort="$(perl -lne 'print $1 if /^\s*redir-port:\s*(\d+)/' ${configFile})"
+    local redirPort="$(perl -lne 'print $1 if /^\s*redir-port:\s*(\d+)/' ${cfgFile})"
     if [ -z "${redirPort}" ];then
         echo "Cannot find redir_port"
         exit 1
     fi
-    local dnsPort="$(grep 'listen' ${cfgFile} | awk -F':' '{print $3}')"
+    local dnsPort="$(grep 'listen' ${cfgFile} | awk -F':' '{print $3}' | perl -lne 'print $1 if/(\d+)/')"
     if [ -z "${dnsPort}" ];then
         echo "Cannot find dns port"
         exit 1
     fi
-    cmd="$(cat<<EOF
+    #cmd="$(cat<<EOF
 
- iptables -t nat -N CLASH_LOCAL
- iptables -t nat -N CLASH_EXTERNAL
+ iptables -t nat -N CLASH_LOCAL ||  iptables -t nat -F CLASH_LOCAL
+ iptables -t nat -N CLASH_EXTERNAL || iptables -t nat -F CLASH_EXTERNAL
 
  # 本机流量
  iptables -t nat -A CLASH_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
@@ -100,6 +109,7 @@ _start_post(){
  iptables -t nat -A CLASH_LOCAL -d 240.0.0.0/4 -j RETURN
  iptables -t nat -A CLASH_LOCAL -d 192.168.0.0/16 -j RETURN
  iptables -t nat -A CLASH_LOCAL -d 10.0.0.0/8 -j RETURN
+ echo "redirPort: '${redirPort}'"
  iptables -t nat -A CLASH_LOCAL -p tcp -j REDIRECT --to-ports ${redirPort}
 
  iptables -t nat -A CLASH_EXTERNAL -d 0.0.0.0/8 -j RETURN
@@ -117,11 +127,12 @@ _start_post(){
  iptables -t nat -I OUTPUT -p tcp -j CLASH_LOCAL
  iptables -t nat -I PREROUTING -p tcp -j CLASH_EXTERNAL
 
- iptables -t nat -N CLASH_DNS_LOCAL
- iptables -t nat -N CLASH_DNS_EXTERNAL
+ iptables -t nat -N CLASH_DNS_LOCAL || iptables -t nat -F CLASH_DNS_LOCAL
+ iptables -t nat -N CLASH_DNS_EXTERNAL || iptables -t nat -F CLASH_DNS_EXTERNAL
 
  iptables -t nat -A CLASH_DNS_LOCAL -p udp ! --dport 53 -j RETURN
  iptables -t nat -A CLASH_DNS_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
+ echo "dnsPort: '${dnsPort}'"
  iptables -t nat -A CLASH_DNS_LOCAL -p udp -j REDIRECT --to-ports ${dnsPort}
 
  iptables -t nat -A CLASH_DNS_EXTERNAL -p udp ! --dport 53 -j RETURN
@@ -130,13 +141,15 @@ _start_post(){
 # apply
  iptables -t nat -I OUTPUT -p udp -j CLASH_DNS_LOCAL
  iptables -t nat -I PREROUTING -p udp -j CLASH_DNS_EXTERNAL
-EOF
-)"
-    sudo -E bash -c "${cmd}"
+#EOF
+#)"
+#    sudo -E bash -c "${cmd}"
 }
 
-_stop_post(){
-    cmd="$(cat<<EOF
+clearRule(){
+#    cmd="$(cat<<EOF
+    # TODO
+    #iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
     iptables -t nat -D OUTPUT -p tcp -j CLASH_LOCAL
     iptables -t nat -D PREROUTING -p tcp -j CLASH_EXTERNAL
 
@@ -151,9 +164,9 @@ _stop_post(){
     iptables -t nat -X CLASH_EXTERNAL
     iptables -t nat -X CLASH_DNS_LOCAL
     iptables -t nat -X CLASH_DNS_EXTERNAL
-EOF
-)"
-    sudo -E bash -c "${cmd}"
+#EOF
+#)"
+#    sudo -E bash -c "${cmd}"
 }
 
 status(){

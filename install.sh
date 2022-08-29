@@ -165,6 +165,7 @@ install(){
     sudo chown ${clashUser}:${clashUser} ${thisDir}/bin/clash
 
     _genServiceFile
+    _genServiceFile2
 
     cd ${thisDir}
 
@@ -179,10 +180,10 @@ install(){
     echo "Add ${thisDir}/bin to PATH manually."
 }
 
-_genServiceFile(){
+clashGateway=${thisDir}/bin/clash-gateway
+clashBinary=${thisDir}/bin/clash
 
-    local clashGateway=${thisDir}/bin/clash-gateway
-    local clashBinary=${thisDir}/bin/clash
+_genServiceFile(){
 
     cat<<EOF >/tmp/clash-gateway.service
 [Unit]
@@ -212,8 +213,35 @@ EOF
     sudo mv /tmp/clash-gateway.service /etc/systemd/system
     sudo systemctl daemon-reload
 
-    _enableSudoUser
+    #_enableSudoUser
     _setCap
+}
+
+_genServiceFile2(){
+    cat<<EOF > /tmp/clash-gateway-rule.service
+[Unit]
+Description=clash gateway rule
+#After=network.target
+
+[Service]
+Type=simple
+ExecStart=${clashGateway} setRule
+
+ExecStopPost=${clashGateway} clearRule
+
+User=root
+
+Restart=always
+# AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+# CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+#Environment=
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo mv /tmp/clash-gateway-rule.service /etc/systemd/system
+    sudo systemctl daemon-reload
+
 }
 
 _setCap(){
