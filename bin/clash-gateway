@@ -58,7 +58,10 @@ restart(){
 }
 
 _start_pre(){
-    echo 
+    if ! command -v iptables >/dev/null 2>&1;then
+        echo "need iptables command!"
+        exit 1
+    fi
 }
 
 _start_post(){
