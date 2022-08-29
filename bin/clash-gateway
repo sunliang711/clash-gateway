@@ -1,0 +1,183 @@
+#!/bin/bash
+if [ -z "${BASH_SOURCE}" ]; then
+    this=${PWD}
+else
+    rpath="$(readlink ${BASH_SOURCE})"
+    if [ -z "$rpath" ]; then
+        rpath=${BASH_SOURCE}
+    elif echo "$rpath" | grep -q '^/'; then
+        # absolute path
+        echo
+    else
+        # relative path
+        rpath="$(dirname ${BASH_SOURCE})/$rpath"
+    fi
+    this="$(cd $(dirname $rpath) && pwd)"
+fi
+
+if [ -r ${SHELLRC_ROOT}/shellrc.d/shelllib ];then
+    source ${SHELLRC_ROOT}/shellrc.d/shelllib
+elif [ -r /tmp/shelllib ];then
+    source /tmp/shelllib
+else
+    # download shelllib then source
+    shelllibURL=https://gitee.com/sunliang711/init2/raw/master/shell/shellrc.d/shelllib
+    (cd /tmp && curl -s -LO ${shelllibURL})
+    if [ -r /tmp/shelllib ];then
+        source /tmp/shelllib
+    fi
+fi
+
+
+###############################################################################
+# write your code below (just define function[s])
+# function is hidden when begin with '_'
+clashBin=${this}/bin/clash
+etcDir=$(cd ${this}/../etc && pwd)
+cfgFile=${etcDir}/config.yaml
+clashUser=clash
+
+config(){
+    if [ ! -e ${cfgFile} ];then
+        cp -v ${etcDir}/config-example.yaml ${cfgFile}
+    fi
+    $ed ${cfgFile}
+}
+
+start(){
+    sudo systemctl start clash-gateway
+}
+
+stop(){
+    sudo systemctl stop clash-gateway
+}
+
+restart(){
+    stop
+    start
+}
+
+_start_pre(){
+    echo 
+}
+
+_start_post(){
+    local defaultDev="$(ip r s | grep default | awk '{print $5}')"
+    echo "default dev: ${defaultDev}"
+    local subnet="$(ip r s | grep -v default | grep ${defaultDev} | awk '{print $1}')"
+    echo "subnet: ${subnet}"
+
+    sysctl -w net.ipv4.ip_forward=1
+    iptables -t nat -A POSTROUTING -o ${defaultDev} -j MASQUERADE
+    iptables -P FORWARD ACCEPT
+
+    local redirPort="$(perl -lne 'print $1 if /^\s*redir-port:\s*(\d+)/' ${configFile})"
+    if [ -z "${redirPort}" ];then
+        echo "Cannot find redir_port"
+        exit 1
+    fi
+    local dnsPort="$(grep 'listen' ${cfgFile} | awk -F':' '{print $3}')"
+    if [ -z "${dnsPort}" ];then
+        echo "Cannot find dns port"
+        exit 1
+    fi
+    cmd="$(cat<<EOF
+
+ iptables -t nat -N CLASH_LOCAL
+ iptables -t nat -N CLASH_EXTERNAL
+
+ # 本机流量
+ iptables -t nat -A CLASH_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 0.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 224.0.0.0/4 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 172.16.0.0/12 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 169.254.0.0/16 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 240.0.0.0/4 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 192.168.0.0/16 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -d 10.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_LOCAL -p tcp -j REDIRECT --to-ports ${redirPort}
+
+ iptables -t nat -A CLASH_EXTERNAL -d 0.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 224.0.0.0/4 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 172.16.0.0/12 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 169.254.0.0/16 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 240.0.0.0/4 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 192.168.0.0/16 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -d 10.0.0.0/8 -j RETURN
+ iptables -t nat -A CLASH_EXTERNAL -p tcp -j REDIRECT --to-ports ${redirPort}
+
+# apply
+ iptables -t nat -I OUTPUT -p tcp -j CLASH_LOCAL
+ iptables -t nat -I PREROUTING -p tcp -j CLASH_EXTERNAL
+
+ iptables -t nat -N CLASH_DNS_LOCAL
+ iptables -t nat -N CLASH_DNS_EXTERNAL
+
+ iptables -t nat -A CLASH_DNS_LOCAL -p udp ! --dport 53 -j RETURN
+ iptables -t nat -A CLASH_DNS_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
+ iptables -t nat -A CLASH_DNS_LOCAL -p udp -j REDIRECT --to-ports ${dnsPort}
+
+ iptables -t nat -A CLASH_DNS_EXTERNAL -p udp ! --dport 53 -j RETURN
+ iptables -t nat -A CLASH_DNS_EXTERNAL -p udp -j REDIRECT --to-ports ${dnsPort}
+
+# apply
+ iptables -t nat -I OUTPUT -p udp -j CLASH_DNS_LOCAL
+ iptables -t nat -I PREROUTING -p udp -j CLASH_DNS_EXTERNAL
+EOF
+)"
+    sudo -E bash -c "${cmd}"
+}
+
+_stop_post(){
+    cmd="$(cat<<EOF
+    iptables -t nat -D OUTPUT -p tcp -j CLASH_LOCAL
+    iptables -t nat -D PREROUTING -p tcp -j CLASH_EXTERNAL
+
+    iptables -t nat -D OUTPUT -p udp -j CLASH_DNS_LOCAL
+    iptables -t nat -D PREROUTING -p udp -j CLASH_DNS_EXTERNAL
+
+    iptables -t nat -F CLASH_LOCAL
+    iptables -t nat -F CLASH_EXTERNAL
+    iptables -t nat -F CLASH_DNS_LOCAL
+    iptables -t nat -F CLASH_DNS_EXTERNAL
+    iptables -t nat -X CLASH_LOCAL
+    iptables -t nat -X CLASH_EXTERNAL
+    iptables -t nat -X CLASH_DNS_LOCAL
+    iptables -t nat -X CLASH_DNS_EXTERNAL
+EOF
+)"
+    sudo -E bash -c "${cmd}"
+}
+
+status(){
+    sudo systemctl status clash-gateway
+}
+
+# write your code above
+###############################################################################
+
+em(){
+    $ed $0
+}
+
+function _help(){
+    cd "${this}"
+    cat<<EOF2
+Usage: $(basename $0) ${bold}CMD${reset}
+
+${bold}CMD${reset}:
+EOF2
+    perl -lne 'print "\t$2" if /^\s*(function)?\s*(\S+)\s*\(\)\s*\{$/' $(basename ${BASH_SOURCE}) | perl -lne "print if /^\t[^_]/"
+}
+
+case "$1" in
+     ""|-h|--help|help)
+        _help
+        ;;
+    *)
+        "$@"
+esac
