@@ -73,12 +73,11 @@ _stop_post(){
     echo
 }
 
+defaultDev="$(ip r s | grep default | awk '{print $5}')"
+subnet="$(ip r s | grep -v default | grep ${defaultDev} | awk '{print $1}')"
 setRule(){
-    local defaultDev="$(ip r s | grep default | awk '{print $5}')"
     echo "default dev: ${defaultDev}"
-    local subnet="$(ip r s | grep -v default | grep ${defaultDev} | awk '{print $1}')"
     echo "subnet: ${subnet}"
-
     sysctl -w net.ipv4.ip_forward=1
     iptables -t nat -A POSTROUTING -o ${defaultDev} -j MASQUERADE
     iptables -P FORWARD ACCEPT
@@ -110,6 +109,9 @@ setRule(){
  iptables -t nat -A CLASH_LOCAL -d 192.168.0.0/16 -j RETURN
  iptables -t nat -A CLASH_LOCAL -d 10.0.0.0/8 -j RETURN
  echo "redirPort: '${redirPort}'"
+
+#iptables -t nat -A CLASH_LOCAL -p tcp -m multiport --sports 22 -j RETURN
+
  iptables -t nat -A CLASH_LOCAL -p tcp -j REDIRECT --to-ports ${redirPort}
 
  iptables -t nat -A CLASH_EXTERNAL -d 0.0.0.0/8 -j RETURN
@@ -121,6 +123,9 @@ setRule(){
  iptables -t nat -A CLASH_EXTERNAL -d 240.0.0.0/4 -j RETURN
  iptables -t nat -A CLASH_EXTERNAL -d 192.168.0.0/16 -j RETURN
  iptables -t nat -A CLASH_EXTERNAL -d 10.0.0.0/8 -j RETURN
+
+# iptables -t nat -A CLASH_EXTERNAL -p tcp -m multiport --sports 22 -j RETURN
+
  iptables -t nat -A CLASH_EXTERNAL -p tcp -j REDIRECT --to-ports ${redirPort}
 
 # apply
@@ -141,15 +146,21 @@ setRule(){
 # apply
  iptables -t nat -I OUTPUT -p udp -j CLASH_DNS_LOCAL
  iptables -t nat -I PREROUTING -p udp -j CLASH_DNS_EXTERNAL
+
+    # remove duplicate rule
+    iptables-save | uniq | iptables-restore
 #EOF
 #)"
 #    sudo -E bash -c "${cmd}"
 }
 
 clearRule(){
+    echo "default dev: ${defaultDev}"
+    echo "subnet: ${subnet}"
 #    cmd="$(cat<<EOF
     # TODO
     #iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
+    iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
     iptables -t nat -D OUTPUT -p tcp -j CLASH_LOCAL
     iptables -t nat -D PREROUTING -p tcp -j CLASH_EXTERNAL
 
@@ -164,6 +175,9 @@ clearRule(){
     iptables -t nat -X CLASH_EXTERNAL
     iptables -t nat -X CLASH_DNS_LOCAL
     iptables -t nat -X CLASH_DNS_EXTERNAL
+
+    # remove duplicate rule
+    iptables-save | uniq | iptables-restore
 #EOF
 #)"
 #    sudo -E bash -c "${cmd}"

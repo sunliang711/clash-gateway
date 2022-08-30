@@ -160,7 +160,7 @@ install(){
 
     echo "add user ${clashUser}.."
     sudo useradd -U ${clashUser}
-    sudo passwd ${clashUser}
+    #sudo passwd ${clashUser}
     echo "chown clash to ${clashUser}.."
     sudo chown ${clashUser}:${clashUser} ${thisDir}/bin/clash
 
@@ -224,14 +224,15 @@ Description=clash gateway rule
 #After=network.target
 
 [Service]
-Type=simple
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=${clashGateway} setRule
 
 ExecStopPost=${clashGateway} clearRule
 
 User=root
 
-Restart=always
+#Restart=always
 # AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 # CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 #Environment=
