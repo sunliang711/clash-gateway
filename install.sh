@@ -126,6 +126,8 @@ install(){
     cd ${thisDir}
     _need curl
     _need unzip
+    _need iptables-save
+    _need iptables-restore
     case $(uname) in
         Linux)
             # clashURL=https://source711.oss-cn-shanghai.aliyuncs.com/clash-premium/clash-linux.tar.bzip
@@ -178,6 +180,8 @@ install(){
 
     export PATH="${thisDir}/bin:${PATH}"
     echo "Add ${thisDir}/bin to PATH manually."
+    echo "Run systemctl enable --now clash-gateway to auto boot on start"
+    echo "Run systemctl enable --now clash-gateway-rule to auto boot on start"
 }
 
 clashGateway=${thisDir}/bin/clash-gateway
