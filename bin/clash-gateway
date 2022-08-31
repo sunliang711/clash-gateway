@@ -75,6 +75,7 @@ _stop_post(){
 
 defaultDev="$(ip r s | grep default | awk '{print $5}')"
 subnet="$(ip r s | grep -v default | grep ${defaultDev} | awk '{print $1}')"
+
 setRule(){
     echo "default dev: ${defaultDev}"
     echo "subnet: ${subnet}"
@@ -92,72 +93,67 @@ setRule(){
         echo "Cannot find dns port"
         exit 1
     fi
-    #cmd="$(cat<<EOF
 
- iptables -t nat -N CLASH_LOCAL ||  iptables -t nat -F CLASH_LOCAL
- iptables -t nat -N CLASH_EXTERNAL || iptables -t nat -F CLASH_EXTERNAL
+    iptables -t nat -N CLASH_LOCAL ||  iptables -t nat -F CLASH_LOCAL
+    iptables -t nat -N CLASH_EXTERNAL || iptables -t nat -F CLASH_EXTERNAL
 
- # 本机流量
- iptables -t nat -A CLASH_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 0.0.0.0/8 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 224.0.0.0/4 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 172.16.0.0/12 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 169.254.0.0/16 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 240.0.0.0/4 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 192.168.0.0/16 -j RETURN
- iptables -t nat -A CLASH_LOCAL -d 10.0.0.0/8 -j RETURN
- echo "redirPort: '${redirPort}'"
+    # 本机流量
+    iptables -t nat -A CLASH_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 0.0.0.0/8 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 224.0.0.0/4 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 172.16.0.0/12 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 169.254.0.0/16 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 240.0.0.0/4 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 192.168.0.0/16 -j RETURN
+    iptables -t nat -A CLASH_LOCAL -d 10.0.0.0/8 -j RETURN
+    echo "redirPort: '${redirPort}'"
 
-#iptables -t nat -A CLASH_LOCAL -p tcp -m multiport --sports 22 -j RETURN
+    #iptables -t nat -A CLASH_LOCAL -p tcp -m multiport --sports 22 -j RETURN
 
- iptables -t nat -A CLASH_LOCAL -p tcp -j REDIRECT --to-ports ${redirPort}
+    iptables -t nat -A CLASH_LOCAL -p tcp -j REDIRECT --to-ports ${redirPort}
 
- iptables -t nat -A CLASH_EXTERNAL -d 0.0.0.0/8 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 224.0.0.0/4 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 172.16.0.0/12 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 169.254.0.0/16 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 240.0.0.0/4 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 192.168.0.0/16 -j RETURN
- iptables -t nat -A CLASH_EXTERNAL -d 10.0.0.0/8 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 0.0.0.0/8 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 224.0.0.0/4 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 172.16.0.0/12 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 169.254.0.0/16 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 240.0.0.0/4 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 192.168.0.0/16 -j RETURN
+    iptables -t nat -A CLASH_EXTERNAL -d 10.0.0.0/8 -j RETURN
 
-# iptables -t nat -A CLASH_EXTERNAL -p tcp -m multiport --sports 22 -j RETURN
+    # iptables -t nat -A CLASH_EXTERNAL -p tcp -m multiport --sports 22 -j RETURN
 
- iptables -t nat -A CLASH_EXTERNAL -p tcp -j REDIRECT --to-ports ${redirPort}
+    iptables -t nat -A CLASH_EXTERNAL -p tcp -j REDIRECT --to-ports ${redirPort}
 
-# apply
- iptables -t nat -I OUTPUT -p tcp -j CLASH_LOCAL
- iptables -t nat -I PREROUTING -p tcp -j CLASH_EXTERNAL
+    # apply
+    iptables -t nat -I OUTPUT -p tcp -j CLASH_LOCAL
+    iptables -t nat -I PREROUTING -p tcp -j CLASH_EXTERNAL
 
- iptables -t nat -N CLASH_DNS_LOCAL || iptables -t nat -F CLASH_DNS_LOCAL
- iptables -t nat -N CLASH_DNS_EXTERNAL || iptables -t nat -F CLASH_DNS_EXTERNAL
+    iptables -t nat -N CLASH_DNS_LOCAL || iptables -t nat -F CLASH_DNS_LOCAL
+    iptables -t nat -N CLASH_DNS_EXTERNAL || iptables -t nat -F CLASH_DNS_EXTERNAL
 
- iptables -t nat -A CLASH_DNS_LOCAL -p udp ! --dport 53 -j RETURN
- iptables -t nat -A CLASH_DNS_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
- echo "dnsPort: '${dnsPort}'"
- iptables -t nat -A CLASH_DNS_LOCAL -p udp -j REDIRECT --to-ports ${dnsPort}
+    iptables -t nat -A CLASH_DNS_LOCAL -p udp ! --dport 53 -j RETURN
+    iptables -t nat -A CLASH_DNS_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
+    echo "dnsPort: '${dnsPort}'"
+    iptables -t nat -A CLASH_DNS_LOCAL -p udp -j REDIRECT --to-ports ${dnsPort}
 
- iptables -t nat -A CLASH_DNS_EXTERNAL -p udp ! --dport 53 -j RETURN
- iptables -t nat -A CLASH_DNS_EXTERNAL -p udp -j REDIRECT --to-ports ${dnsPort}
+    iptables -t nat -A CLASH_DNS_EXTERNAL -p udp ! --dport 53 -j RETURN
+    iptables -t nat -A CLASH_DNS_EXTERNAL -p udp -j REDIRECT --to-ports ${dnsPort}
 
-# apply
- iptables -t nat -I OUTPUT -p udp -j CLASH_DNS_LOCAL
- iptables -t nat -I PREROUTING -p udp -j CLASH_DNS_EXTERNAL
+    # apply
+    iptables -t nat -I OUTPUT -p udp -j CLASH_DNS_LOCAL
+    iptables -t nat -I PREROUTING -p udp -j CLASH_DNS_EXTERNAL
 
-    # remove duplicate rule
+        # remove duplicate rule
     iptables-save | uniq | iptables-restore
-#EOF
-#)"
-#    sudo -E bash -c "${cmd}"
 }
 
 clearRule(){
     echo "default dev: ${defaultDev}"
     echo "subnet: ${subnet}"
-#    cmd="$(cat<<EOF
     # TODO
     #iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
     iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
@@ -178,9 +174,6 @@ clearRule(){
 
     # remove duplicate rule
     iptables-save | uniq | iptables-restore
-#EOF
-#)"
-#    sudo -E bash -c "${cmd}"
 }
 
 status(){

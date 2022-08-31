@@ -68,7 +68,7 @@ cfw-bypass:
   - <local>
 cfw-latency-timeout: 5000
 proxies:
-  - name: atomUsa
+  - name: local
     type: socks5
     server: 10.1.1.18
     port: 4020
@@ -95,9 +95,7 @@ proxy-groups:
     interval: 300
     tolerance: 180
     proxies:
-      -  atomUsa
-        #-  sw
-        #-  atomUsa
+      -  local
 
 
   - name:  Apple

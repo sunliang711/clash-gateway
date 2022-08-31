@@ -119,15 +119,18 @@ function _need(){
     fi
 }
 
-serviceFile=/etc/systemd/system/clash-gateway.service
+gatewayServiceName=clash-gateway
+ruleServiceName=clash-gateway-rule
+gatewayServiceFile=/etc/systemd/system/${gatewayServiceName}.service
+ruleServiceFile=/etc/systemd/system/${ruleServiceName}.service
 clashUser=clash
+script=${thisDir}/bin/clash-gateway
+clashBinary=${thisDir}/bin/clash
 
-install(){
-    cd ${thisDir}
+_download(){
+    set -ex
     _need curl
     _need unzip
-    _need iptables-save
-    _need iptables-restore
     case $(uname) in
         Linux)
             # clashURL=https://source711.oss-cn-shanghai.aliyuncs.com/clash-premium/clash-linux.tar.bzip
@@ -158,25 +161,34 @@ install(){
     #unzip
     gunzip $tarFile
     chmod +x $name
-    mv $name ${thisDir}/bin/clash
+    mv $name ${clashBinary}
 
+    mkdir -p ${thisDir}/etc || true
+
+    if [ ! -e ${thisDir}/Country.mmdb ];then
+        ( cd ${thisDir} && curl -LO https://source711.oss-cn-shanghai.aliyuncs.com/clash-premium/Country.mmdb )
+    fi
+    ln -sf ${thisDir}/Country.mmdb ${thisDir}/etc/Country.mmdb || { echo "link Country.mmdb failed"; return 1; }
+}
+
+_adduser(){
+    set -xe
     echo "add user ${clashUser}.."
-    sudo useradd -U ${clashUser}
+    sudo useradd -M -U -s /usr/sbin/nologin ${clashUser}
     #sudo passwd ${clashUser}
-    echo "chown clash to ${clashUser}.."
-    sudo chown ${clashUser}:${clashUser} ${thisDir}/bin/clash
+    #echo "chown clash to ${clashUser}.."
+    #sudo chown ${clashUser}:${clashUser} ${thisDir}/bin/clash
+}
+
+install(){
+    cd ${thisDir}
+    _need iptables-save
+    _need iptables-restore
+
+    _download
+    _adduser
 
     _genServiceFile
-    _genServiceFile2
-
-    cd ${thisDir}
-
-    _run "mkdir -p ${thisDir}/etc"
-
-    if [ ! -e Country.mmdb ];then
-        curl -LO https://source711.oss-cn-shanghai.aliyuncs.com/clash-premium/Country.mmdb
-    fi
-    ln -sf ${thisDir}/Country.mmdb ${thisDir}/etc/Country.mmdb || { echo "link Country.mmdb failed"; exit 1; }
 
     export PATH="${thisDir}/bin:${PATH}"
     echo "Add ${thisDir}/bin to PATH manually."
@@ -184,11 +196,8 @@ install(){
     echo "Run systemctl enable --now clash-gateway-rule to auto boot on start"
 }
 
-clashGateway=${thisDir}/bin/clash-gateway
-clashBinary=${thisDir}/bin/clash
 
 _genServiceFile(){
-
     cat<<EOF >/tmp/clash-gateway.service
 [Unit]
 Description=clash gateway service
@@ -196,11 +205,11 @@ Description=clash gateway service
 
 [Service]
 Type=simple
-ExecStartPre=${clashGateway} _start_pre
+ExecStartPre=${script} _start_pre
 ExecStart=${clashBinary} -d . -f config.yaml
-ExecStartPost=${clashGateway} _start_post
+ExecStartPost=${script} _start_post
 
-ExecStopPost=${clashGateway} _stop_post
+ExecStopPost=${script} _stop_post
 
 User=${clashUser}
 Group=${clashUser}
@@ -208,20 +217,14 @@ Group=${clashUser}
 WorkingDirectory=${thisDir}/etc
 
 Restart=always
-# AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-# CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 #Environment=
+
 [Install]
 WantedBy=multi-user.target
 EOF
-    sudo mv /tmp/clash-gateway.service /etc/systemd/system
-    sudo systemctl daemon-reload
-
-    #_enableSudoUser
-    _setCap
-}
-
-_genServiceFile2(){
     cat<<EOF > /tmp/clash-gateway-rule.service
 [Unit]
 Description=clash gateway rule
@@ -230,15 +233,15 @@ Description=clash gateway rule
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=${clashGateway} setRule
+ExecStart=${script} setRule
 
-ExecStopPost=${clashGateway} clearRule
+ExecStopPost=${script} clearRule
 
 User=root
 
 #Restart=always
 # AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-# CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 #Environment=
 [Install]
 WantedBy=multi-user.target
@@ -246,7 +249,11 @@ EOF
 
     sudo mv /tmp/clash-gateway-rule.service /etc/systemd/system
     sudo systemctl daemon-reload
+    sudo mv /tmp/clash-gateway.service /etc/systemd/system
+    sudo systemctl daemon-reload
 
+    #_enableSudoUser
+    # _setCap
 }
 
 _setCap(){
@@ -256,6 +263,30 @@ _setCap(){
 _enableSudoUser(){
     mkdir /etc/sudoers.d
     echo "${clashUser} ALL=(ALL:ALL) NOPASSWD:ALL" | sudo tee -a /etc/sudoers.d/nopass
+}
+
+_removeServiceFile(){
+    sudo rm -rf ${gatewayServiceFile} ${ruleServiceFile}
+
+}
+
+_removeUser(){
+    sudo userdel clash
+}
+
+_removeBinary(){
+    /bin/rm -rf ${clashBinary} ${thisDir}/Country.mmdb
+}
+
+uninstall(){
+    sudo systemctl stop ${gatewayServiceName}
+    sudo systemctl stop ${ruleServiceName}
+
+    _removeServiceFile
+
+    _removeUser
+
+    _removeBinary
 }
 
 ###############################################################################
