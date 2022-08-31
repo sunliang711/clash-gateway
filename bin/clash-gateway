@@ -36,12 +36,37 @@ clashBin=${this}/bin/clash
 etcDir=$(cd ${this}/../etc && pwd)
 cfgFile=${etcDir}/config.yaml
 clashUser=clash
+mark=1
+
+filterSubnets=(
+    0.0.0.0/8
+    127.0.0.0/8
+    172.16.0.0/12
+    127.0.0.0/8
+    169.254.0.0/16 
+    192.168.0.0/16 
+    10.0.0.0/8
+    224.0.0.0/4
+    240.0.0.0/4
+)
 
 config(){
     if [ ! -e ${cfgFile} ];then
         cp -v ${etcDir}/config-example.yaml ${cfgFile}
     fi
+    if command -v md5sum >/dev/null 2>&1;then
+        hashBefore=$(md5sum ${cfgFile})
+    fi
+
     $ed ${cfgFile}
+
+    if command -v md5sum >/dev/null 2>&1;then
+        hashAfter=$(md5sum ${cfgFile})
+        if [ "${hashBefore}" != "${hashAfter}" ];then
+            echo "config file changed, restart service .."
+            restart
+        fi
+    fi
 }
 
 start(){
@@ -73,71 +98,108 @@ _stop_post(){
     echo
 }
 
-defaultDev="$(ip r s | grep default | awk '{print $5}')"
-subnet="$(ip r s | grep -v default | grep ${defaultDev} | awk '{print $1}')"
+# defaultDev="$(ip r s | grep default | awk '{print $5}')"
+# subnet="$(ip r s | grep -v default | grep ${defaultDev} | awk '{print $1}')"
+
+_defaultDev(){
+    ip r s | grep default | awk '{ print $5 }'
+}
 
 setRule(){
-    echo "default dev: ${defaultDev}"
-    echo "subnet: ${subnet}"
-    sysctl -w net.ipv4.ip_forward=1
-    iptables -t nat -A POSTROUTING -o ${defaultDev} -j MASQUERADE
-    iptables -P FORWARD ACCEPT
+    setRule1
+}
 
+clearRule(){
+    clearRule1
+}
+
+setRule1(){
     local redirPort="$(perl -lne 'print $1 if /^\s*redir-port:\s*(\d+)/' ${cfgFile})"
     if [ -z "${redirPort}" ];then
         echo "Cannot find redir_port"
         exit 1
     fi
+    echo "redirPort: '${redirPort}'"
+
     local dnsPort="$(grep 'listen' ${cfgFile} | awk -F':' '{print $3}' | perl -lne 'print $1 if/(\d+)/')"
     if [ -z "${dnsPort}" ];then
         echo "Cannot find dns port"
         exit 1
     fi
+    echo "dnsPort: ${dnsPort}"
 
-    iptables -t nat -N CLASH_LOCAL ||  iptables -t nat -F CLASH_LOCAL
-    iptables -t nat -N CLASH_EXTERNAL || iptables -t nat -F CLASH_EXTERNAL
+    _setMasquerade
 
-    # 本机流量
-    iptables -t nat -A CLASH_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 0.0.0.0/8 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 224.0.0.0/4 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 172.16.0.0/12 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 127.0.0.0/8 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 169.254.0.0/16 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 240.0.0.0/4 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 192.168.0.0/16 -j RETURN
-    iptables -t nat -A CLASH_LOCAL -d 10.0.0.0/8 -j RETURN
-    echo "redirPort: '${redirPort}'"
+    _redirectTcp CLASH_LOCAL ${redirPort} ${clashUser}
+    _redirectTcp CLASH_EXTERNAL ${redirPort}
 
-    #iptables -t nat -A CLASH_LOCAL -p tcp -m multiport --sports 22 -j RETURN
+    _setDnsRule ${clashUser} ${dnsPort}
 
-    iptables -t nat -A CLASH_LOCAL -p tcp -j REDIRECT --to-ports ${redirPort}
+    _dedup
+}
 
-    iptables -t nat -A CLASH_EXTERNAL -d 0.0.0.0/8 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 224.0.0.0/4 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 172.16.0.0/12 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 127.0.0.0/8 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 169.254.0.0/16 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 240.0.0.0/4 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 192.168.0.0/16 -j RETURN
-    iptables -t nat -A CLASH_EXTERNAL -d 10.0.0.0/8 -j RETURN
+_setMasquerade(){
+    local defaultDev="$(_defaultDev)"
+    sysctl -w net.ipv4.ip_forward=1
+    iptables -t nat -A POSTROUTING -o ${defaultDev} -j MASQUERADE
+    iptables -P FORWARD ACCEPT
+}
 
-    # iptables -t nat -A CLASH_EXTERNAL -p tcp -m multiport --sports 22 -j RETURN
+_clearMasquerade(){
+    local defaultDev="$(_defaultDev)"
+    iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
+}
 
-    iptables -t nat -A CLASH_EXTERNAL -p tcp -j REDIRECT --to-ports ${redirPort}
+_redirectTcp(){
+    local chainName=${1:?'missing chain name'}
+    local redirPort=${2:?'missing redirPort'}
+    # 可选的owner参数，如果有owner则说明是本机，否则是局域网设备
+    local owner=${3}
 
-    # apply
-    iptables -t nat -I OUTPUT -p tcp -j CLASH_LOCAL
-    iptables -t nat -I PREROUTING -p tcp -j CLASH_EXTERNAL
+
+    # create new chain
+    iptables -t nat -N "${chainName}" || iptables -t nat -F "${chainName}"
+    if [ -n "${owner}" ];then
+        iptables -t nat -A "${chainName}" -m owner --uid-owner ${owner} -j RETURN
+    fi
+    # filter subnets
+    for subnet in ${filterSubnets[@]};do
+        iptables -t nat -A ${chainName} -d ${subnet} -j RETURN
+    done
+    # redirect
+    iptables -t nat -A ${chainName} -p tcp -j REDIRECT --to-ports ${redirPort}
+
+    # apply iptables 
+    if [ -n "${owner}" ];then
+        iptables -t nat -I OUTPUT -p tcp -j ${chainName}
+    else
+        iptables -t nat -I PREROUTING -p tcp -j ${chainName}
+    fi
+
+}
+
+_clearRedirectTcp(){
+    iptables -t nat -D OUTPUT -p tcp -j CLASH_LOCAL
+    iptables -t nat -D PREROUTING -p tcp -j CLASH_EXTERNAL
+
+    iptables -t nat -F CLASH_LOCAL
+    iptables -t nat -F CLASH_EXTERNAL
+
+    iptables -t nat -X CLASH_LOCAL
+    iptables -t nat -X CLASH_EXTERNAL
+}
+
+# 把本机和局域网的DNS请求重定向到dnsPort
+_setDnsRule(){
+    owner=${1:?'missing uid-owner'}
+    dnsPort=${2:?'missing dnsPort'}
+    echo "dnsPort: '${dnsPort}'"
 
     iptables -t nat -N CLASH_DNS_LOCAL || iptables -t nat -F CLASH_DNS_LOCAL
     iptables -t nat -N CLASH_DNS_EXTERNAL || iptables -t nat -F CLASH_DNS_EXTERNAL
 
     iptables -t nat -A CLASH_DNS_LOCAL -p udp ! --dport 53 -j RETURN
-    iptables -t nat -A CLASH_DNS_LOCAL -m owner --uid-owner ${clashUser} -j RETURN
-    echo "dnsPort: '${dnsPort}'"
+    iptables -t nat -A CLASH_DNS_LOCAL -m owner --uid-owner ${owner} -j RETURN
     iptables -t nat -A CLASH_DNS_LOCAL -p udp -j REDIRECT --to-ports ${dnsPort}
 
     iptables -t nat -A CLASH_DNS_EXTERNAL -p udp ! --dport 53 -j RETURN
@@ -146,34 +208,181 @@ setRule(){
     # apply
     iptables -t nat -I OUTPUT -p udp -j CLASH_DNS_LOCAL
     iptables -t nat -I PREROUTING -p udp -j CLASH_DNS_EXTERNAL
-
-        # remove duplicate rule
-    iptables-save | uniq | iptables-restore
 }
 
-clearRule(){
-    echo "default dev: ${defaultDev}"
-    echo "subnet: ${subnet}"
-    # TODO
-    #iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
-    iptables -t nat -D POSTROUTING -o ${defaultDev} -j MASQUERADE
-    iptables -t nat -D OUTPUT -p tcp -j CLASH_LOCAL
-    iptables -t nat -D PREROUTING -p tcp -j CLASH_EXTERNAL
-
+_clearDnsRule(){
+    echo "_clearDnsRule.."
+    set -x
     iptables -t nat -D OUTPUT -p udp -j CLASH_DNS_LOCAL
     iptables -t nat -D PREROUTING -p udp -j CLASH_DNS_EXTERNAL
 
-    iptables -t nat -F CLASH_LOCAL
-    iptables -t nat -F CLASH_EXTERNAL
     iptables -t nat -F CLASH_DNS_LOCAL
     iptables -t nat -F CLASH_DNS_EXTERNAL
-    iptables -t nat -X CLASH_LOCAL
-    iptables -t nat -X CLASH_EXTERNAL
+
     iptables -t nat -X CLASH_DNS_LOCAL
     iptables -t nat -X CLASH_DNS_EXTERNAL
+}
 
-    # remove duplicate rule
+# remove duplicate rule
+_dedup(){
+    echo "remove duplicate rules.."
     iptables-save | uniq | iptables-restore
+}
+
+clearRule1(){
+    _clearMasquerade
+    _clearRedirectTcp
+    _clearDnsRule
+    _dedup
+}
+
+# 策略路由
+_ruleRoute(){
+    ip rule add fwmark ${mark} table 100
+    ip route add local 0.0.0.0/0 dev lo table 100
+}
+
+_clearRuleRoute(){
+    ip rule del fwmark ${mark} table 100
+    ip route del local 0.0.0.0/0 dev lo table 100
+}
+
+_setMangleRule(){
+    echo "cfgfile: ${cfgFile}"
+    local tproxyPort="$(perl -lne 'print $1 if /^\s*tproxy-port:\s*(\d+)/' ${cfgFile})"
+    if [ -z "${tproxyPort}" ];then
+        echo "Cannot find tproxy-port"
+        exit 1
+    fi
+    echo "tproxyPort: '${tproxyPort}'"
+
+    # create table
+    iptables -t mangle -N CLASH_MANGLE || { iptables -t mangle -F CLASH_MANGLE; }
+    # filter subnet
+    for subnet in ${filterSubnets[@]};do
+        iptables -t mangle -A CLASH_MANGLE -d ${subnet} -j RETURN
+    done
+    # iptables -t mangle -A CLASH_MANGLE -m owner ! --uid-owner ${clashUser} -j RETURN
+    # mark
+    iptables -t mangle -A CLASH_MANGLE -p tcp -j TPROXY --on-port ${tproxyPort} --tproxy-mark ${mark}
+    iptables -t mangle -A CLASH_MANGLE -p udp -j TPROXY --on-port ${tproxyPort} --tproxy-mark ${mark}
+
+    # apply
+    iptables -t mangle -A PREROUTING -j CLASH_MANGLE
+
+    # iptables -t nat -A OUTPUT -m owner ! --uid-owner ${clashUser} -j RETURN
+}
+
+_clearMangleRule(){
+    iptables -t mangle -D PREROUTING -j CLASH_MANGLE
+    iptables -t mangle -F CLASH_MANGLE
+    iptables -t mangle -X CLASH_MANGLE
+    # iptables -t nat -D OUTPUT -m owner ! --uid-owner ${clashUser} -j RETURN
+}
+
+setRule2(){
+    set -xe
+    #TODO dns owner
+    local dnsPort="$(grep 'listen' ${cfgFile} | awk -F':' '{print $3}' | perl -lne 'print $1 if/(\d+)/')"
+    if [ -z "${dnsPort}" ];then
+        echo "Cannot find dns port"
+        exit 1
+    fi
+    _setDnsRule ${clashUser} ${dnsPort}
+    _setMasquerade
+    _setMangleRule
+    _ruleRoute
+    _dedup
+}
+
+clearRule2(){
+    _clearDnsRule
+    _clearMasquerade
+    _clearRuleRoute
+    _clearMangleRule
+    _dedup
+}
+
+setRule3(){
+    set -ex
+    # ENABLE ipv4 forward
+    sysctl -w net.ipv4.ip_forward=1
+
+    # ROUTE RULES
+    ip rule add fwmark 1 lookup 100
+    ip route add local 0.0.0.0/0 dev lo table 100
+
+    # clash 链负责处理转发流量 
+    iptables -t mangle -N clash
+
+    # 目标地址为局域网或保留地址的流量跳过处理
+    # 保留地址参考: https://zh.wikipedia.org/wiki/%E5%B7%B2%E5%88%86%E9%85%8D%E7%9A%84/8_IPv4%E5%9C%B0%E5%9D%80%E5%9D%97%E5%88%97%E8%A1%A8
+    iptables -t mangle -A clash -d 0.0.0.0/8 -j RETURN
+    iptables -t mangle -A clash -d 127.0.0.0/8 -j RETURN
+    iptables -t mangle -A clash -d 10.0.0.0/8 -j RETURN
+    iptables -t mangle -A clash -d 172.16.0.0/12 -j RETURN
+    iptables -t mangle -A clash -d 192.168.0.0/16 -j RETURN
+    iptables -t mangle -A clash -d 169.254.0.0/16 -j RETURN
+
+    iptables -t mangle -A clash -d 224.0.0.0/4 -j RETURN
+    iptables -t mangle -A clash -d 240.0.0.0/4 -j RETURN
+
+    # 其他所有流量转向到 7893 端口，并打上 mark
+    iptables -t mangle -A clash -p tcp -j TPROXY --on-port 7693 --tproxy-mark 1
+    iptables -t mangle -A clash -p udp -j TPROXY --on-port 7693 --tproxy-mark 1
+
+    # 转发所有 DNS 查询到 1053 端口
+    # 此操作会导致所有 DNS 请求全部返回虚假 IP(fake ip 198.18.0.1/16)
+    iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to 1053
+
+    # 如果想要 dig 等命令可用, 可以只处理 DNS SERVER 设置为当前内网的 DNS 请求
+    #iptables -t nat -I PREROUTING -p udp --dport 53 -d 192.168.0.0/16 -j REDIRECT --to 1053
+
+    # 最后让所有流量通过 clash 链进行处理
+    iptables -t mangle -A PREROUTING -j clash
+
+    # clash_local 链负责处理网关本身发出的流量
+    iptables -t mangle -N clash_local
+
+    # nerdctl 容器流量重新路由
+    #iptables -t mangle -A clash_local -i nerdctl2 -p udp -j MARK --set-mark 666
+    #iptables -t mangle -A clash_local -i nerdctl2 -p tcp -j MARK --set-mark 666
+
+    # 跳过内网流量
+    iptables -t mangle -A clash_local -d 0.0.0.0/8 -j RETURN
+    iptables -t mangle -A clash_local -d 127.0.0.0/8 -j RETURN
+    iptables -t mangle -A clash_local -d 10.0.0.0/8 -j RETURN
+    iptables -t mangle -A clash_local -d 172.16.0.0/12 -j RETURN
+    iptables -t mangle -A clash_local -d 192.168.0.0/16 -j RETURN
+    iptables -t mangle -A clash_local -d 169.254.0.0/16 -j RETURN
+
+    iptables -t mangle -A clash_local -d 224.0.0.0/4 -j RETURN
+    iptables -t mangle -A clash_local -d 240.0.0.0/4 -j RETURN
+
+    # 为本机发出的流量打 mark
+    iptables -t mangle -A clash_local -p tcp -j MARK --set-mark 1
+    iptables -t mangle -A clash_local -p udp -j MARK --set-mark 1
+
+    # 跳过 clash 程序本身发出的流量, 防止死循环(clash 程序需要使用 "clash" 用户启动) 
+    iptables -t mangle -A OUTPUT -p tcp -m owner --uid-owner clash -j RETURN
+    iptables -t mangle -A OUTPUT -p udp -m owner --uid-owner clash -j RETURN
+
+    # 让本机发出的流量跳转到 clash_local
+    # clash_local 链会为本机流量打 mark, 打过 mark 的流量会重新回到 PREROUTING 上
+    iptables -t mangle -A OUTPUT -j clash_local
+}
+
+clearRule3(){
+    set -ex
+
+    ip rule del fwmark 1 table 100 || true
+    ip route del local 0.0.0.0/0 dev lo table 100 || true
+
+    iptables -t nat -F
+    iptables -t nat -X
+    iptables -t mangle -F
+    iptables -t mangle -X clash || true
+    iptables -t mangle -X clash_local || true
 }
 
 status(){
