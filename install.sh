@@ -173,6 +173,11 @@ _download(){
 
 _adduser(){
     set -xe
+    if id -u ${clashUser} >/dev/null 2&>1;then
+        echo "user: ${clashUser} already exists"
+        return
+    fi
+
     echo "add user ${clashUser}.."
     sudo useradd -M -U -s /usr/sbin/nologin ${clashUser}
     #sudo passwd ${clashUser}

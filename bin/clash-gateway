@@ -63,8 +63,14 @@ config(){
     if command -v md5sum >/dev/null 2>&1;then
         hashAfter=$(md5sum ${cfgFile})
         if [ "${hashBefore}" != "${hashAfter}" ];then
-            echo "config file changed, restart service .."
-            restart
+
+            if ps aux | grep 'clash-gateway/bin/clash -d' | grep -qv grep;then
+                echo "config file changed and it is running, restart service .."
+                restart
+            else
+                echo "config file changed bug it is not running, do not restart service"
+            fi
+
         fi
     fi
 }
