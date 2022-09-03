@@ -14,22 +14,12 @@ dns:
   # enhanced-mode: fake-ip
   enhanced-mode: redir-host
   nameserver:
-    # - https://dns.adguard.com/dns-query
-    # - tls://dns.google
     - 223.5.5.5
     - 10.1.1.1
-    - tls://dns.rubyfish.cn:853
-    - 119.29.29.29
   fallback:
-    # - https://dns.adguard.com/dns-query
     - tls://1.1.1.1:853
-      #- tcp://1.1.1.1:53
-      #- tcp://208.67.222.222:443
-    - tls://dns.google
+    - https://dns.adguard.com/dns-query
     - tls://dns.rubyfish.cn:853
-      #- 114.114.114.114
-    - tls://1.0.0.1:853
-    - tls://dns.google:853
   fake-ip-filter:
     - '*.gitez.cc'
 
