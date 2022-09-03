@@ -65,10 +65,10 @@ config(){
         if [ "${hashBefore}" != "${hashAfter}" ];then
 
             if ps aux | grep 'clash-gateway/bin/clash -d' | grep -qv grep;then
-                echo "config file changed and it is running, restart service .."
+                echo "Config file changed and it is running, restart service .."
                 restart
             else
-                echo "config file changed bug it is not running, do not restart service"
+                echo "Config file changed bug it is not running, do NOT restart service"
             fi
 
         fi
@@ -112,17 +112,17 @@ _defaultDev(){
 }
 
 setRule(){
-    setRule1
+    _setRule1
 }
 
 clearRule(){
-    clearRule1
+    _clearRule1
 }
 
 # rule1: 只支持TCP
 # rule2: 支持TCP和UDP，但是通过wireguard vpn连进来后访问不了内网
 
-setRule1(){
+_setRule1(){
     local redirPort="$(perl -lne 'print $1 if /^\s*redir-port:\s*(\d+)/' ${cfgFile})"
     if [ -z "${redirPort}" ];then
         echo "Cannot find redir_port"
@@ -238,7 +238,7 @@ _dedup(){
     iptables-save | uniq | iptables-restore
 }
 
-clearRule1(){
+_clearRule1(){
     _clearMasquerade
     _clearRedirectTcp
     _clearDnsRule
@@ -290,7 +290,9 @@ _setMangleRule(){
     iptables -t mangle -A CLASH_MANGLE_SELF -d 240.0.0.0/4 -j RETURN
 
     # 为本机发出的流量打 mark
+    # 这条命令导致wiregurad vpn连进来后访问无网络
     iptables -t mangle -A CLASH_MANGLE_SELF -p tcp -j MARK --set-mark 1
+    # 这条命令导致wiregurad vpn连进来后访问无网络
     iptables -t mangle -A CLASH_MANGLE_SELF -p udp -j MARK --set-mark 1
 
     # 跳过 clash 程序本身发出的流量, 防止死循环(clash 程序需要使用 "clash" 用户启动) 
@@ -310,7 +312,7 @@ _clearMangleRule(){
     # iptables -t nat -D OUTPUT -m owner ! --uid-owner ${clashUser} -j RETURN
 }
 
-setRule2(){
+_setRule2(){
     set -xe
     #TODO dns owner
     local dnsPort="$(grep 'listen' ${cfgFile} | awk -F':' '{print $3}' | perl -lne 'print $1 if/(\d+)/')"
@@ -325,7 +327,7 @@ setRule2(){
     _dedup
 }
 
-clearRule2(){
+_clearRule2(){
     _clearDnsRule
     _clearMasquerade
     _clearRuleRoute
@@ -335,6 +337,10 @@ clearRule2(){
 
 status(){
     sudo systemctl status clash-gateway
+}
+
+log(){
+    sudo journalctl -u clash-gateway -f
 }
 
 # write your code above
