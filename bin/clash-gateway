@@ -279,26 +279,19 @@ _setMangleRule(){
     iptables -t mangle -A PREROUTING -j CLASH_MANGLE
 
     iptables -t mangle -N CLASH_MANGLE_SELF || { iptables -t mangle -F CLASH_MANGLE_SELF; }
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 0.0.0.0/8 -j RETURN
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 127.0.0.0/8 -j RETURN
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 10.0.0.0/8 -j RETURN
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 172.16.0.0/12 -j RETURN
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 192.168.0.0/16 -j RETURN
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 169.254.0.0/16 -j RETURN
-
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 224.0.0.0/4 -j RETURN
-    iptables -t mangle -A CLASH_MANGLE_SELF -d 240.0.0.0/4 -j RETURN
+    for subnet in ${filterSubnets[@]};do
+        iptables -t mangle -A CLASH_MANGLE_SELF -d ${subnet} -j RETURN
+    done
 
     # 为本机发出的流量打 mark
     # 这条命令导致wiregurad vpn连进来后访问无网络
-    iptables -t mangle -A CLASH_MANGLE_SELF -p tcp -j MARK --set-mark 1
+    iptables -t mangle -A CLASH_MANGLE_SELF -p tcp -j MARK --set-mark ${mark}
     # 这条命令导致wiregurad vpn连进来后访问无网络
-    iptables -t mangle -A CLASH_MANGLE_SELF -p udp -j MARK --set-mark 1
+    iptables -t mangle -A CLASH_MANGLE_SELF -p udp -j MARK --set-mark ${mark}
 
     # 跳过 clash 程序本身发出的流量, 防止死循环(clash 程序需要使用 "clash" 用户启动) 
     iptables -t mangle -A OUTPUT -m owner ! --uid-owner ${clashUser} -j CLASH_MANGLE_SELF
 
-    # iptables -t nat -A OUTPUT -m owner ! --uid-owner ${clashUser} -j RETURN
 }
 
 _clearMangleRule(){
